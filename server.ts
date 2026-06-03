@@ -200,6 +200,11 @@ async function startServer() {
       return res.status(403).json({ error: 'Cannot delete internal system tables' });
     }
 
+    const userPrefix = `u_${req.user.id}_`;
+    if (tableName.startsWith('u_') && !tableName.startsWith(userPrefix)) {
+      return res.status(403).json({ error: 'Cannot delete tables belonging to other users' });
+    }
+
     try {
       const dbPool = await getPool();
       if (!dbPool) throw new Error('Database not connected');
@@ -272,8 +277,13 @@ async function startServer() {
       
       // Filter out internal tables (including typing_sessions and all other application/internal tables)
       const internalTables = ['users', 'saved_queries', 'query_history', 'missions_progress', 'table_folders', 'projects', 'typing_sessions'];
+      const userPrefix = `u_${req.user.id}_`;
       const tables = rows.map((row: any) => row.table_name)
-        .filter((t: string) => !internalTables.includes(t));
+        .filter((t: string) => {
+          if (internalTables.includes(t)) return false;
+          // Only show shared practice tables or tables belonging to this user
+          return t.startsWith('practice_') || t.startsWith(userPrefix);
+        });
       
       // Get folder mappings
       const { rows: folders } = await dbPool.query('SELECT table_name, folder_name FROM table_folders WHERE user_id = $1', [req.user.id]);
@@ -369,7 +379,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/tables/schemas/all', authenticateToken, async (req, res) => {
+  app.get('/api/tables/schemas/all', authenticateToken, async (req: any, res) => {
     try {
       const dbPool = await getPool();
       if (!dbPool) throw new Error('Database not connected');
@@ -381,8 +391,13 @@ async function startServer() {
       `);
       
       const internalTables = ['users', 'saved_queries', 'query_history', 'missions_progress', 'table_folders', 'projects', 'typing_sessions'];
+      const userPrefix = `u_${req.user.id}_`;
       const tables = tableRows.map((row: any) => row.table_name)
-        .filter((t: string) => !internalTables.includes(t));
+        .filter((t: string) => {
+          if (internalTables.includes(t)) return false;
+          // Only show shared practice tables or tables belonging to this user
+          return t.startsWith('practice_') || t.startsWith(userPrefix);
+        });
       
       const schemas: Record<string, any[]> = {};
       for (const table of tables as string[]) {
@@ -399,11 +414,16 @@ async function startServer() {
     }
   });
 
-  app.get('/api/tables/:tableName/schema', authenticateToken, async (req, res) => {
+  app.get('/api/tables/:tableName/schema', authenticateToken, async (req: any, res) => {
     const { tableName } = req.params;
     const internalTables = ['users', 'saved_queries', 'query_history', 'missions_progress', 'table_folders', 'projects', 'typing_sessions'];
     if (internalTables.includes(tableName)) {
       return res.status(403).json({ error: 'Access to system table schema is restricted' });
+    }
+
+    const userPrefix = `u_${req.user.id}_`;
+    if (tableName.startsWith('u_') && !tableName.startsWith(userPrefix)) {
+      return res.status(403).json({ error: 'Access to other users\' table schemas is restricted' });
     }
     try {
       const dbPool = await getPool();
@@ -459,6 +479,16 @@ async function startServer() {
   app.post('/api/query', authenticateToken, async (req: any, res) => {
     const { sql } = req.body;
     if (!sql) return res.status(400).json({ error: 'SQL query required' });
+
+    // Dynamic Query isolation: Ensure they cannot reference tables of other users (u_X_...)
+    const regexOtherUserTable = /\bu_([0-9]+)_[a-zA-Z0-9_]*\b/gi;
+    let match;
+    while ((match = regexOtherUserTable.exec(sql)) !== null) {
+      const ownerId = parseInt(match[1], 10);
+      if (ownerId !== req.user.id) {
+        return res.status(403).json({ error: 'Access denied: You do not have permission to access tables belonging to other users.' });
+      }
+    }
 
     const startTime = Date.now();
     try {
@@ -629,7 +659,13 @@ async function startServer() {
     const safeUploadId = path.basename(uploadId).replace(/[^a-zA-Z0-9_\-]/g, '');
     const safeFileName = path.basename(fileName).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
     const cleanTotalChunks = parseInt(totalChunks, 10);
-    const finalTableName = tableName || `table_${Date.now()}`;
+    
+    // Enforce user prefix to guarantee table isolation
+    const userPrefix = `u_${req.user.id}_`;
+    let finalTableName = tableName || `table_${Date.now()}`;
+    if (!finalTableName.startsWith(userPrefix)) {
+      finalTableName = `${userPrefix}${finalTableName}`;
+    }
 
     // Validate table name identifiers to prevent SQL injection
     const isValidIdentifier = (name: string) => /^[a-zA-Z][a-zA-Z0-9_]*$/.test(name);
@@ -810,7 +846,13 @@ async function startServer() {
         sanitizedColumns.push(finalName);
       });
 
-      const tableName = req.body.tableName || `table_${Date.now()}`;
+      let tableName = req.body.tableName || `table_${Date.now()}`;
+      
+      // Enforce user prefix to guarantee table isolation
+      const userPrefix = `u_${req.user.id}_`;
+      if (!tableName.startsWith(userPrefix)) {
+        tableName = `${userPrefix}${tableName}`;
+      }
       
       // Validate table name identifiers to prevent SQL injection
       const isValidIdentifier = (name: string) => /^[a-zA-Z][a-zA-Z0-9_]*$/.test(name);

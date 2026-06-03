@@ -1,7 +1,10 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+
+// Configuration is securely injected at build-time by Vite from firebase-applet-config.json 
+// (which is ignored by Git to avoid GitHub secrets scanner alerts) or from environment variables.
+const firebaseConfig = (process.env.FIREBASE_CONFIG as any) || {};
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);

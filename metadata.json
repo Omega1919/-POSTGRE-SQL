@@ -1,0 +1,6 @@
+{
+  "name": "SQL Explorer Pro",
+  "description": "Full-stack PostgreSQL Query Application with CSV/Excel import, SQL editor, and data visualization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
